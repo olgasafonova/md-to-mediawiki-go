@@ -228,7 +228,7 @@ func ConvertLinks(text string) string {
 // ConvertCallouts converts markdown callouts to MediaWiki styled boxes
 func ConvertCallouts(text string) string {
 	// Info boxes - using Tietoevry cool palette
-	infoRegex := regexp.MustCompile(`(?m)>\s*\[!info\]\s*(.*?)(?=\n(?!>)|\z)`)
+	infoRegex := regexp.MustCompile(`(?m)>\s*\[!info\]\s*(.*)$`)
 	text = infoRegex.ReplaceAllString(text, `{| class="wikitable" style="border-left:4px solid #280071; background-color:#f7f7fa;"
 | <div style="padding:0.5em;">
 <strong style="color:#280071;">ℹ️ Info:</strong> $1
@@ -236,7 +236,7 @@ func ConvertCallouts(text string) string {
 |}`)
 
 	// Warning boxes - using Tietoevry warm palette
-	warningRegex := regexp.MustCompile(`(?m)>\s*\[!warning\]\s*(.*?)(?=\n(?!>)|\z)`)
+	warningRegex := regexp.MustCompile(`(?m)>\s*\[!warning\]\s*(.*)$`)
 	text = warningRegex.ReplaceAllString(text, `{| class="wikitable" style="border-left:4px solid #f9423a; background-color:#fdfaf8;"
 | <div style="padding:0.5em;">
 <strong style="color:#f9423a;">⚠️ Warning:</strong> $1
@@ -244,7 +244,7 @@ func ConvertCallouts(text string) string {
 |}`)
 
 	// Success boxes
-	successRegex := regexp.MustCompile(`(?m)>\s*\[!success\]\s*(.*?)(?=\n(?!>)|\z)`)
+	successRegex := regexp.MustCompile(`(?m)>\s*\[!success\]\s*(.*)$`)
 	text = successRegex.ReplaceAllString(text, `{| class="wikitable" style="border-left:4px solid #26d07c; background-color:#f7f7fa;"
 | <div style="padding:0.5em;">
 <strong style="color:#26d07c;">✓ Success:</strong> $1
@@ -252,7 +252,7 @@ func ConvertCallouts(text string) string {
 |}`)
 
 	// Note boxes
-	noteRegex := regexp.MustCompile(`(?m)>\s*\[!note\]\s*(.*?)(?=\n(?!>)|\z)`)
+	noteRegex := regexp.MustCompile(`(?m)>\s*\[!note\]\s*(.*)$`)
 	text = noteRegex.ReplaceAllString(text, `{| class="wikitable" style="border-left:4px solid #b1b5ce; background-color:#f7f7fa;"
 | <div style="padding:0.5em;">
 <strong style="color:#071d49;">📝 Note:</strong> $1
@@ -432,26 +432,49 @@ func ConvertTables(text string) string {
 
 // ReverseChangelogOrder reverses the order of changelog version sections so newest appears first
 func ReverseChangelogOrder(text string) string {
-	// Find the changelog section
-	changelogRegex := regexp.MustCompile(`(?s)(===<span[^>]*>.*?Changelog.*?</span>===)(.*?)(===<span[^>]*>(?!Version)[^<]*</span>===)`)
-	matches := changelogRegex.FindStringSubmatch(text)
+	// Find the changelog header
+	changelogHeaderRegex := regexp.MustCompile(`(?s)(===<span[^>]*>.*?Changelog.*?</span>===)`)
+	headerMatch := changelogHeaderRegex.FindStringIndex(text)
 
-	if matches == nil {
+	if headerMatch == nil {
 		return text
 	}
 
-	beforeChangelog := text[:changelogRegex.FindStringIndex(text)[0]]
-	changelogHeader := matches[1]
-	changelogContent := matches[2]
-	afterChangelogIdx := changelogRegex.FindStringSubmatchIndex(text)[6]
-	afterChangelog := text[afterChangelogIdx:]
+	beforeChangelog := text[:headerMatch[0]]
+	changelogHeader := text[headerMatch[0]:headerMatch[1]]
 
-	// Split changelog into version sections
-	versionRegex := regexp.MustCompile(`(?s)(====<span[^>]*>Version[^<]*</span>====.*?)(?====<span[^>]*>Version|$)`)
-	versions := versionRegex.FindAllString(changelogContent, -1)
+	// Find the next H3 section that's not a Version
+	nextSectionRegex := regexp.MustCompile(`===<span[^>]*>[^<]*</span>===`)
+	remainingText := text[headerMatch[1]:]
 
-	if len(versions) == 0 {
+	// Find all version sections
+	versionRegex := regexp.MustCompile(`(?s)====<span[^>]*>Version[^<]*</span>====.*?(?:====<span[^>]*>Version|===<span[^>]*>|$)`)
+	versionMatches := versionRegex.FindAllStringIndex(remainingText, -1)
+
+	if len(versionMatches) == 0 {
 		return text
+	}
+
+	// Extract version sections
+	var versions []string
+	changelogEndIdx := len(remainingText)
+
+	for i, match := range versionMatches {
+		start := match[0]
+		var end int
+		if i < len(versionMatches)-1 {
+			end = versionMatches[i+1][0]
+		} else {
+			// Find the next === section or end of text
+			nextSection := nextSectionRegex.FindStringIndex(remainingText[match[0]+10:])
+			if nextSection != nil {
+				end = match[0] + 10 + nextSection[0]
+				changelogEndIdx = end
+			} else {
+				end = len(remainingText)
+			}
+		}
+		versions = append(versions, remainingText[start:end])
 	}
 
 	// Reverse the versions
@@ -460,6 +483,7 @@ func ReverseChangelogOrder(text string) string {
 	}
 
 	// Reconstruct
+	afterChangelog := remainingText[changelogEndIdx:]
 	newChangelog := changelogHeader + "\n\n" + strings.Join(versions, "\n")
 
 	return beforeChangelog + newChangelog + "\n" + afterChangelog
